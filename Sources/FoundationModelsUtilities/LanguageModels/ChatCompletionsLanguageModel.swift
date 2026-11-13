@@ -53,7 +53,17 @@ public struct ChatCompletionsLanguageModel: Sendable, LanguageModel {
   /// vendor-specific headers.
   public var additionalHeaders: [String: String]
 
-  public var supportsGuidedGeneration: Bool
+  /// Whether the endpoint supports tool calls.
+  public let supportsToolCalling: Bool
+
+  /// Whether the endpoint accepts image input.
+  public let supportsVision: Bool
+
+  /// Whether the endpoint returns reasoning content.
+  public let supportsReasoning: Bool
+
+  /// Whether the endpoint supports guided generation.
+  public let supportsGuidedGeneration: Bool
 
   // Overridden in tests to inject a URLSession with mock protocol handlers.
   var urlSession: URLSession?
@@ -66,6 +76,9 @@ public struct ChatCompletionsLanguageModel: Sendable, LanguageModel {
   ///   - url: The base URL of the chat completions endpoint.
   ///   - additionalHeaders: Headers to merge on top of the defaults
   ///     (for example, an `Authorization` header).
+  ///   - supportsToolCalling: Whether the endpoint supports tool calls.
+  ///   - supportsVision: Whether the endpoint accepts image input.
+  ///   - supportsReasoning: Whether the endpoint returns reasoning content.
   ///   - supportsGuidedGeneration: Whether the endpoint supports the
   ///     `response_format` field for structured output. Defaults to `true`.
   ///   - urlSessionConfiguration: An optional `URLSessionConfiguration` used
@@ -76,23 +89,30 @@ public struct ChatCompletionsLanguageModel: Sendable, LanguageModel {
     name: String,
     url: URL,
     additionalHeaders: [String: String] = [:],
+    supportsToolCalling: Bool = true,
+    supportsVision: Bool = true,
+    supportsReasoning: Bool = true,
     supportsGuidedGeneration: Bool = true,
     urlSessionConfiguration: URLSessionConfiguration? = nil
   ) {
     self.name = name
     self.url = url
     self.additionalHeaders = additionalHeaders
+    self.supportsToolCalling = supportsToolCalling
+    self.supportsVision = supportsVision
+    self.supportsReasoning = supportsReasoning
     self.supportsGuidedGeneration = supportsGuidedGeneration
     self.urlSession = urlSessionConfiguration.map { URLSession(configuration: $0) }
   }
 
   // Implementation of LanguageModel Protocol
   public var capabilities: LanguageModelCapabilities {
-    if supportsGuidedGeneration {
-      LanguageModelCapabilities([.vision, .toolCalling, .reasoning, .guidedGeneration])
-    } else {
-      LanguageModelCapabilities([.vision, .toolCalling, .reasoning])
-    }
+    var capabilities: [LanguageModelCapabilities.Capability] = []
+    if supportsVision { capabilities.append(.vision) }
+    if supportsToolCalling { capabilities.append(.toolCalling) }
+    if supportsReasoning { capabilities.append(.reasoning) }
+    if supportsGuidedGeneration { capabilities.append(.guidedGeneration) }
+    return LanguageModelCapabilities(capabilities)
   }
 
   public var executorConfiguration: Executor.Configuration {
@@ -441,6 +461,13 @@ public struct ChatCompletionsLanguageModel: Sendable, LanguageModel {
             let imageURL = ChatCompletionsClient.MessageContent.ImageURL(url: dataURL)
             return [ChatCompletionsClient.MessageContent(imageURL: imageURL)]
             #endif
+          case .data(_):
+            throw LanguageModelError.unsupportedTranscriptContent(
+              LanguageModelError.UnsupportedTranscriptContent(
+                unsupportedContent: [entry],
+                debugDescription: "Data attachments are not supported by \(Self.self)."
+              )
+            )
           @unknown default:
             throw LanguageModelError.unsupportedTranscriptContent(
               LanguageModelError.UnsupportedTranscriptContent(
@@ -545,6 +572,14 @@ public struct ChatCompletionsLanguageModel: Sendable, LanguageModel {
             return nil
           }.joined()
           pendingReasoning = (pendingReasoning ?? "") + text
+
+        case .data(_):
+          throw LanguageModelError.unsupportedTranscriptContent(
+            LanguageModelError.UnsupportedTranscriptContent(
+              unsupportedContent: [entry],
+              debugDescription: "Data transcript entries are not supported by \(Self.self)."
+            )
+          )
 
         @unknown default:
           continue
