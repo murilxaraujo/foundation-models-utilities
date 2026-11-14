@@ -75,7 +75,9 @@ The `ChatCompletionsLanguageModel` is especially useful for integrating with a l
 
 This package also contains a collection of profile modifiers to help you compress a session's transcript and prevent it from outgrowing the model's context window. Strategies include dropping completed tool calls, establishing a rolling window, and summarizing previous interactions into a single entry. There's no one-size-fits-all solution, so we encourage composing strategies together to suit your specific application.
 
-This example combines three history management modifiers. Modifiers apply in outside-in order: first, the profile drops completed tool calls, then applies a rolling window. Summarization runs only if the rolling window of 10 entries exceeds 5000 tokens.
+`compactHistory` follows [OpenCode's compaction structure](https://github.com/anomalyco/opencode). It records the objective, requirements, decisions, work state, next move, relevant files, and important context. On later passes, it updates the existing checkpoint and keeps a recent conversation tail when possible. Unlike OpenCode, this Foundation Models utility triggers and retains history by **entry count**, not token count.
+
+This example combines three history management modifiers. Modifiers apply in outside-in order: first, the profile drops completed tool calls, then applies a rolling window. Summarization runs when the resulting transcript exceeds the entry threshold of 8.
 
 ```swift
 struct MyProfile: LanguageModelSession.DynamicProfile {
@@ -86,11 +88,20 @@ struct MyProfile: LanguageModelSession.DynamicProfile {
       Instructions("A conversation between a user and a helpful assistant.")
       ToggleDarkModeTool()
     }
-    .summarizeHistory(entryThreshold: 10, model: status.summarizerModel)
+    .summarizeHistory(entryThreshold: 8, model: status.summarizerModel)
     .rollingWindow(entries: 10)
     .droppingCompletedToolCalls()
   }
 }
+```
+
+For coding-agent conversations, use `compactHistory` when you want a resumable checkpoint instead of a general-purpose prose summary:
+
+```swift
+Profile {
+  Instructions("A coding assistant that helps with the user's task.")
+}
+.compactHistory(entryThreshold: 50, keepRecentEntries: 8, model: summarizerModel)
 ```
 
 ### Skills

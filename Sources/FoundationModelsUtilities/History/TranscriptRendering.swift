@@ -14,7 +14,7 @@ import FoundationModels
 extension Transcript.Entry {
   /// Plain-text role-tagged rendering of this entry, suitable for embedding
   /// in an LLM prompt. Returns `nil` for entries without conversational
-  /// text (for example, `.instructions`).
+  /// text (for example, `.instructions` or `.data`).
   var chatText: String? {
     switch self {
     case .prompt(let prompt):
@@ -31,7 +31,7 @@ extension Transcript.Entry {
       return "Tool call: \(rendered)"
     case .toolOutput(let output):
       return "Tool output (\(output.toolName)): \(output.segments.textContent)"
-    case .instructions:
+    case .instructions, .data:
       return nil
     @unknown default:
       return nil
