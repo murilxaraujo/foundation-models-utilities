@@ -99,6 +99,28 @@ struct CompactHistoryTests {
     #expect(secondCompactionInput.contains("Third request."))
   }
 
+  @Test func `manually compacts history without a trailing prompt`() async throws {
+    let mainModel = MockModel(textResponse: "Assistant response.", tokenCount: 10)
+    let summarizer = MockModel(textResponse: structuredSummary, tokenCount: 10)
+    let session = LanguageModelSession(model: mainModel)
+
+    _ = try await session.respond(to: "First request.")
+    _ = try await session.respond(to: "Second request.")
+
+    let compacted = try await HistoryCompactor.compact(
+      history: Array(session.transcript.history),
+      model: summarizer,
+      keepRecentEntries: 1
+    )
+
+    let prompt = try #require(compacted.compactMap(\.prompt).last)
+    let text = promptText(prompt)
+    #expect(compacted.count == 1)
+    #expect(text.contains("<conversation-checkpoint>"))
+    #expect(text.contains("User: Second request."))
+    #expect(text.contains("Assistant: Assistant response."))
+  }
+
   @Test func `retries once and fails without writing an unstructured checkpoint`() async throws {
     let mainModel = MockModel(textResponse: "Assistant response.", tokenCount: 10)
     let recorder = TranscriptRecorder()

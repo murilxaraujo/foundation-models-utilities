@@ -76,30 +76,120 @@ public enum CompactHistoryError: Error, LocalizedError, Sendable, Equatable {
   }
 }
 
+/// Produces an OpenCode-style structured checkpoint for a transcript.
+///
+/// Use this type when compaction must be invoked directly, such as from a
+/// user-controlled action. ``LanguageModelSession/DynamicProfile/compactHistory(entryThreshold:keepRecentEntries:model:instructions:)``
+/// uses the same compactor automatically when the transcript exceeds an entry
+/// threshold.
+public enum HistoryCompactor {
+  /// Replaces the supplied conversation history with a structured checkpoint.
+  ///
+  /// If the history ends with a prompt, the compactor keeps that prompt's
+  /// segments and generation settings on the replacement entry. Without a
+  /// trailing prompt, the replacement is a checkpoint prompt ready for the
+  /// next user turn.
+  public static func compact<Model: LanguageModel>(
+    history entries: [Transcript.Entry],
+    model: Model,
+    keepRecentEntries: Int = 8,
+    instructions: Instructions? = nil
+  ) async throws -> [Transcript.Entry] {
+    guard !entries.isEmpty else {
+      return entries
+    }
+
+    let currentPrompt: Transcript.Prompt?
+    if case .prompt(let prompt) = entries.last {
+      currentPrompt = prompt
+    } else {
+      currentPrompt = nil
+    }
+
+    let textRepresentation = entries.chatLog()
+    guard !textRepresentation.isEmpty else {
+      return entries
+    }
+
+    let isUpdate = entries.contains(where: CompactHistorySupport.isCheckpoint)
+    let defaultInstructions =
+      isUpdate
+      ? CompactHistorySupport.updateInstructions
+      : CompactHistorySupport.summaryInstructions
+    let session = LanguageModelSession(
+      model: model,
+      instructions: instructions ?? Instructions { defaultInstructions }
+    )
+
+    var summary = try await session.respond(
+      to: Prompt {
+        "Summarize this conversation:\n\n\(textRepresentation)"
+      }
+    ).content
+
+    if !CompactHistorySupport.containsExpectedHeading(summary) {
+      summary = try await session.respond(to: Prompt { CompactHistorySupport.nudge }).content
+    }
+    guard CompactHistorySupport.containsExpectedHeading(summary) else {
+      throw CompactHistoryError.summaryMissingStructure
+    }
+
+    let recentContext = CompactHistorySupport.recentContext(
+      in: entries,
+      excludingTrailingPrompt: currentPrompt != nil,
+      keepRecentEntries: keepRecentEntries
+    )
+    let checkpoint = CompactHistorySupport.checkpoint(
+      summary: summary,
+      recentContext: recentContext
+    )
+    let checkpointSegment = Transcript.Segment.text(
+      Transcript.TextSegment(content: checkpoint)
+    )
+    let prompt = Transcript.Prompt(
+      id: UUID().uuidString,
+      metadata: currentPrompt?.metadata ?? [:],
+      segments: [checkpointSegment] + (currentPrompt?.segments ?? []),
+      options: currentPrompt?.options ?? GenerationOptions(),
+      responseFormat: currentPrompt?.responseFormat,
+      contextOptions: currentPrompt?.contextOptions ?? ContextOptions()
+    )
+    return [.prompt(prompt)]
+  }
+}
+
 private struct CompactHistoryModifier<Model: LanguageModel>: LanguageModelSession
     .DynamicProfileModifier
 {
-  private static var checkpointMarker: String {
-    "<conversation-checkpoint>"
-  }
+  let entryThreshold: Int
+  let keepRecentEntries: Int
+  let model: Model
+  let instructions: Instructions?
 
-  private static var summaryHeadings: [String] {
-    [
-      "## Objective",
-      "## Requirements",
-      "## Decisions",
-      "## Work State",
-      "### Completed",
-      "### Active",
-      "### Blocked",
-      "## Next Move",
-      "## Relevant Files",
-      "## Important Context"
-    ]
-  }
+  @SessionProperty(\.history)
+  var history
 
-  private static var summaryInstructions: String {
-    """
+  func body(content: Content) -> some DynamicProfile {
+    content.onPrompt {
+      guard history.count > entryThreshold else {
+        return
+      }
+      guard case .prompt = history.last else {
+        return
+      }
+      let compactedHistory = try await HistoryCompactor.compact(
+        history: Array(history),
+        model: model,
+        keepRecentEntries: keepRecentEntries,
+        instructions: instructions
+      )
+      history.replaceSubrange(history.startIndex..<history.endIndex, with: compactedHistory)
+    }
+  }
+}
+
+private enum CompactHistorySupport {
+  static let summaryInstructions = """
     Summarize only what the user and the assistant said and did. Leave out instructions and setup the assistant was given rather than told by the user: repository conventions, instruction files, and environment details. The next agent receives those separately.
 
     You MUST use this format for your response (you may omit sections that aren't applicable). Do not include the <template> tags in your response.
@@ -145,9 +235,8 @@ private struct CompactHistoryModifier<Model: LanguageModel>: LanguageModelSessio
     - Do not continue the task or call tools.
     - Return only the structured summary. Do not include a preamble, explanation, or other commentary.
     """
-  }
 
-  private static var updateInstructions: String {
+  static var updateInstructions: String {
     """
     Update the existing checkpoint in the conversation above into one consolidated summary.
     Newer history always takes precedence over the existing checkpoint. Preserve previous information unless newer history clearly contradicts, supersedes, resolves, or makes it stale. If something is no longer relevant to continuing the work, you may remove it.
@@ -158,77 +247,25 @@ private struct CompactHistoryModifier<Model: LanguageModel>: LanguageModelSessio
     """
   }
 
-  private static var nudge: String {
-    """
+  static let nudge = """
     The previous response did not fill in the required summary template. Do not call tools. Return the summary as text using the exact section headings from the template.
     """
-  }
 
-  let entryThreshold: Int
-  let keepRecentEntries: Int
-  let model: Model
-  let instructions: Instructions?
+  private static let checkpointMarker = "<conversation-checkpoint>"
+  private static let summaryHeadings = [
+    "## Objective",
+    "## Requirements",
+    "## Decisions",
+    "## Work State",
+    "### Completed",
+    "### Active",
+    "### Blocked",
+    "## Next Move",
+    "## Relevant Files",
+    "## Important Context"
+  ]
 
-  @SessionProperty(\.history)
-  var history
-
-  func body(content: Content) -> some DynamicProfile {
-    content.onPrompt {
-      guard history.count > entryThreshold else {
-        return
-      }
-
-      guard case .prompt(let prompt) = history.last else {
-        return
-      }
-
-      let entries = Array(history)
-      let textRepresentation = entries.chatLog()
-      guard !textRepresentation.isEmpty else {
-        return
-      }
-
-      let isUpdate = entries.contains(where: Self.isCheckpoint)
-      let defaultInstructions = isUpdate ? Self.updateInstructions : Self.summaryInstructions
-      let session = LanguageModelSession(
-        model: model,
-        instructions: instructions ?? Instructions { defaultInstructions }
-      )
-
-      var summary = try await session.respond(
-        to: Prompt {
-          "Summarize this conversation:\n\n\(textRepresentation)"
-        }
-      ).content
-
-      if !Self.containsExpectedHeading(summary) {
-        summary = try await session.respond(to: Prompt { Self.nudge }).content
-      }
-      guard Self.containsExpectedHeading(summary) else {
-        throw CompactHistoryError.summaryMissingStructure
-      }
-
-      let recentContext = Self.recentContext(
-        in: entries,
-        keepRecentEntries: keepRecentEntries
-      )
-      let checkpoint = Self.checkpoint(summary: summary, recentContext: recentContext)
-      let checkpointSegment = Transcript.TextSegment(content: checkpoint)
-
-      history = [
-        .prompt(
-          Transcript.Prompt(
-            id: UUID().uuidString,
-            segments: [.text(checkpointSegment)] + prompt.segments,
-            options: prompt.options,
-            responseFormat: prompt.responseFormat
-          )
-        )
-      ]
-    }
-  }
-
-  private static func isCheckpoint(_ entry: Transcript.Entry) -> Bool {
+  static func isCheckpoint(_ entry: Transcript.Entry) -> Bool {
     guard case .prompt(let prompt) = entry else {
       return false
     }
@@ -240,20 +277,20 @@ private struct CompactHistoryModifier<Model: LanguageModel>: LanguageModelSessio
     }
   }
 
-  private static func containsExpectedHeading(_ text: String) -> Bool {
+  static func containsExpectedHeading(_ text: String) -> Bool {
     text.split(separator: "\n").contains { line in
       summaryHeadings.contains(String(line).trimmingCharacters(in: .whitespaces))
     }
   }
 
-  /// Retains a recent, complete range from prior history, excluding the
-  /// current prompt. When a checkpoint exists, its summary is updated rather
-  /// than copied into the recent-context section.
-  private static func recentContext(
+  /// Retains the newest complete exchange from the tail that fits the entry
+  /// target. Existing checkpoint content is updated, not copied into the tail.
+  static func recentContext(
     in entries: [Transcript.Entry],
+    excludingTrailingPrompt: Bool,
     keepRecentEntries: Int
   ) -> String {
-    let prior = Array(entries.dropLast())
+    let prior = excludingTrailingPrompt ? Array(entries.dropLast()) : entries
     let keepCount = max(0, keepRecentEntries)
     guard keepCount > 0, !prior.isEmpty else {
       return ""
@@ -279,7 +316,6 @@ private struct CompactHistoryModifier<Model: LanguageModel>: LanguageModelSessio
     guard start > lowerBound || checkpointIndex != nil else {
       return ""
     }
-
     return prior[start...].chatLog()
   }
 
@@ -288,7 +324,7 @@ private struct CompactHistoryModifier<Model: LanguageModel>: LanguageModelSessio
     return false
   }
 
-  private static func checkpoint(summary: String, recentContext: String) -> String {
+  static func checkpoint(summary: String, recentContext: String) -> String {
     """
     <conversation-checkpoint>
     <summary>

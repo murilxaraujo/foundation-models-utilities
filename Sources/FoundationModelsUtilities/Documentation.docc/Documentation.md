@@ -29,6 +29,7 @@ Utilities and support for common patterns working with the Foundation Models API
 
 - ``FoundationModels/LanguageModelSession/DynamicProfile/summarizeHistory(entryThreshold:model:instructions:summaryPostamble:)``
 - ``FoundationModels/LanguageModelSession/DynamicProfile/compactHistory(entryThreshold:keepRecentEntries:model:instructions:)``
+- ``HistoryCompactor``
 - ``CompactHistoryError``
 - ``FoundationModels/LanguageModelSession/DynamicProfile/rollingWindow(entries:)``
 - ``FoundationModels/LanguageModelSession/DynamicProfile/rollingWindow(size:)``

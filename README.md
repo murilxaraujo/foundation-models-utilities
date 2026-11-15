@@ -75,7 +75,7 @@ The `ChatCompletionsLanguageModel` is especially useful for integrating with a l
 
 This package also contains a collection of profile modifiers to help you compress a session's transcript and prevent it from outgrowing the model's context window. Strategies include dropping completed tool calls, establishing a rolling window, and summarizing previous interactions into a single entry. There's no one-size-fits-all solution, so we encourage composing strategies together to suit your specific application.
 
-`compactHistory` follows [OpenCode's compaction structure](https://github.com/anomalyco/opencode). It records the objective, requirements, decisions, work state, next move, relevant files, and important context. On later passes, it updates the existing checkpoint and keeps a recent conversation tail when possible. Unlike OpenCode, this Foundation Models utility triggers and retains history by **entry count**, not token count.
+`compactHistory` follows [OpenCode's compaction structure](https://github.com/anomalyco/opencode). It records the objective, requirements, decisions, work state, next move, relevant files, and important context. On later passes, it updates the existing checkpoint and keeps a recent conversation tail when possible. Unlike OpenCode, this Foundation Models utility triggers and retains history by **entry count**, not token count. Use `HistoryCompactor` to run the same compaction manually.
 
 This example combines three history management modifiers. Modifiers apply in outside-in order: first, the profile drops completed tool calls, then applies a rolling window. Summarization runs when the resulting transcript exceeds the entry threshold of 8.
 
