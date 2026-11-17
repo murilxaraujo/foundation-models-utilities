@@ -21,6 +21,7 @@ enum EntrySummary: Equatable {
   case toolOutput(String)
   case reasoning
   case instructions
+  case data
 }
 
 extension Transcript {
@@ -44,6 +45,8 @@ extension Transcript.Entry {
       return .reasoning
     case .instructions:
       return .instructions
+    case .data(_):
+      return .data
     @unknown default:
       fatalError("Unknown transcript entry")
     }

@@ -27,10 +27,18 @@ let package = Package(
       targets: ["FoundationModelsUtilities"]
     )
   ],
+  dependencies: [
+    .package(
+      url: "https://github.com/modelcontextprotocol/swift-sdk.git",
+      from: "0.12.1"
+    )
+  ],
   targets: [
     .target(
       name: "FoundationModelsUtilities",
-      dependencies: [],
+      dependencies: [
+        .product(name: "MCP", package: "swift-sdk")
+      ],
       swiftSettings: [
         .enableExperimentalFeature("InternalImportsByDefault"),
         .enableExperimentalFeature("NonisolatedNonsendingByDefault"),
