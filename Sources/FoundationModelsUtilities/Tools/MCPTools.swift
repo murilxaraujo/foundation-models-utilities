@@ -9,7 +9,6 @@ public extension MCP.Client {
   ///
   /// The returned group is a snapshot. Call this method again after the server's
   /// tool list changes.
-  @available(macOS 26.0, *)
   func foundationModelToolGroup(
     named name: String,
     description: String = "Tools provided by a connected Model Context Protocol server."
@@ -45,7 +44,6 @@ private func discoverMCPTools(
 }
 
 /// A single remote MCP tool represented as a Foundation Models `Tool`.
-@available(macOS 26.0, *)
 public struct MCPToolAdapter: FoundationModels.Tool {
   public typealias Arguments = GeneratedContent
   public typealias Output = FoundationModels.Prompt
