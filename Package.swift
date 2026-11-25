@@ -49,6 +49,7 @@ let package = Package(
       name: "FoundationModelsUtilitiesTests",
       dependencies: [
         "FoundationModelsUtilities",
+        .product(name: "MCP", package: "swift-sdk"),
       ],
       swiftSettings: [
         .enableExperimentalFeature("InternalImportsByDefault"),

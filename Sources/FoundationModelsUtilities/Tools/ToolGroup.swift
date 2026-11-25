@@ -31,7 +31,6 @@ public import FoundationModels
 ///
 /// Tool names are passed to Foundation Models unchanged. Keep names unique when
 /// combining groups.
-@available(macOS 26.0, *)
 public struct ToolGroup: DynamicInstructions, Sendable {
   public let name: String
   public let description: String
@@ -79,7 +78,6 @@ public struct ToolGroup: DynamicInstructions, Sendable {
 }
 
 /// A result builder for composing tools and nested ``ToolGroup`` values.
-@available(macOS 26.0, *)
 @resultBuilder
 public enum ToolGroupBuilder {
   /// The accumulated tools and group context produced by the builder.
