@@ -2,18 +2,45 @@ public import Foundation
 public import FoundationModels
 public import MCP
 
+/// One MCP tool call presented to the host for authorization.
+///
+/// The arguments are the decoded JSON object the model supplied. Nothing in
+/// this value grants authority: the host decides whether the call may proceed.
+public struct MCPToolCall: Sendable {
+  public let serverName: String
+  public let toolName: String
+  public let arguments: [String: MCP.Value]
+
+  public init(serverName: String, toolName: String, arguments: [String: MCP.Value]) {
+    self.serverName = serverName
+    self.toolName = toolName
+    self.arguments = arguments
+  }
+}
+
+/// A host gate consulted immediately before an MCP tool call is sent.
+///
+/// Throwing denies the call and no request reaches the MCP server.
+public typealias MCPToolAuthorizer = @Sendable (MCPToolCall) async throws -> Void
+
 /// Discovers a connected MCP client's tools and returns them in the provider-neutral
 /// ``ToolGroup`` abstraction.
 public extension MCP.Client {
   /// Discovers this client's remote tools and packages them as one tool group.
   ///
   /// The returned group is a snapshot. Call this method again after the server's
-  /// tool list changes.
+  /// tool list changes. `authorizeCall`, when supplied, runs on every tool
+  /// invocation before the request is sent; a thrown error denies that call.
   func foundationModelToolGroup(
     named name: String,
-    description: String = "Tools provided by a connected Model Context Protocol server."
+    description: String = "Tools provided by a connected Model Context Protocol server.",
+    authorizeCall: MCPToolAuthorizer? = nil
   ) async throws -> ToolGroup {
-    let tools = try await discoverMCPTools(from: self, groupName: name)
+    let tools = try await discoverMCPTools(
+      from: self,
+      groupName: name,
+      authorizeCall: authorizeCall
+    )
     return ToolGroup(
       name: name,
       description: description,
@@ -24,7 +51,8 @@ public extension MCP.Client {
 
 private func discoverMCPTools(
   from client: MCP.Client,
-  groupName: String
+  groupName: String,
+  authorizeCall: MCPToolAuthorizer?
 ) async throws -> [MCPToolAdapter] {
   var tools: [MCP.Tool] = []
   var cursor: String?
@@ -40,10 +68,15 @@ private func discoverMCPTools(
     }
   } while cursor != nil
 
-  return try tools.map { try MCPToolAdapter(client: client, groupName: groupName, tool: $0) }
+  return try tools.map {
+    try MCPToolAdapter(client: client, groupName: groupName, tool: $0, authorizeCall: authorizeCall)
+  }
 }
 
 /// A single remote MCP tool represented as a Foundation Models `Tool`.
+///
+/// Host policy is checked on every invocation, after arguments are decoded and
+/// before the request is sent. A denial never reaches the remote server.
 public struct MCPToolAdapter: FoundationModels.Tool {
   public typealias Arguments = GeneratedContent
   public typealias Output = FoundationModels.Prompt
@@ -57,9 +90,18 @@ public struct MCPToolAdapter: FoundationModels.Tool {
   public let remoteName: String
 
   private let client: MCP.Client
+  private let groupName: String
+  private let authorizeCall: MCPToolAuthorizer?
 
-  fileprivate init(client: MCP.Client, groupName: String, tool: MCP.Tool) throws {
+  fileprivate init(
+    client: MCP.Client,
+    groupName: String,
+    tool: MCP.Tool,
+    authorizeCall: MCPToolAuthorizer?
+  ) throws {
     self.client = client
+    self.groupName = groupName
+    self.authorizeCall = authorizeCall
     self.remoteName = tool.name
     self.name = Self.namespacedName(groupName: groupName, toolName: tool.name)
     self.description = tool.description ?? "MCP tool \(tool.name) from \(groupName)."
@@ -71,6 +113,11 @@ public struct MCPToolAdapter: FoundationModels.Tool {
     let value = try JSONDecoder().decode(MCP.Value.self, from: data)
     guard case .object(let properties) = value else {
       throw MCPToolsError.expectedObjectArguments(remoteName)
+    }
+    if let authorizeCall {
+      try await authorizeCall(
+        MCPToolCall(serverName: groupName, toolName: remoteName, arguments: properties)
+      )
     }
 
     let request = MCP.CallTool.request(.init(name: remoteName, arguments: properties))
